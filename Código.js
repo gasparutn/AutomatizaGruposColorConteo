@@ -3,11 +3,172 @@ function onOpen() {
   ui.createMenu('Escuela Hípico')
     .addSubMenu(ui.createMenu('🧰Utililidad')
       .addItem('Eliminar Espaciados en Datos', 'limpiarColumnasPorHoja')
+      // Este botón actualiza Colores/Grupos en la hoja "Registros"
+      .addItem('Actualizar Grupos y Colores (en Hoja Registros)', 'actualizarGruposManual')
+      // Este botón actualiza la hoja "Contador"
+      .addItem('Actualizar Contador (en Hoja Contador)', 'actualizarContadorGruposCompleto'))
+    .addToUi();
+}
+
+/**
+ * Se ejecuta automáticamente cuando un registro entra por el formulario (INSERT_ROW)
+ * o cuando editas la hoja "Registros" manualmente.
+ * ¡RECUERDA INSTALAR ESTE ACTIVADOR (TRIGGER) MANUALMENTE!
+ */
+function onChange(e) {
+  try {
+    // Solo nos interesa si el cambio fue una fila nueva o una edición
+    if (e.changeType === 'INSERT_ROW' || e.changeType === 'EDIT') {
+      
+      // Llama a la función de conteo CORRECTA (la nueva)
+      actualizarContadorGruposCompleto();
+    }
+  } catch (err) {
+    Logger.log(`Error en onChange: ${err.message}`);
+  }
+}
+
+
+/**
+ * Esta función actualiza la Columna I (Grupos) en la hoja "Registros"
+ * y luego (importante) llama al contador para actualizar la hoja "Contador".
+ */
+function actualizarGruposManual() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const hojaConfig = ss.getSheetByName(NOMBRE_HOJA_CONFIG);
+    const hojaRegistro = ss.getSheetByName(NOMBRE_HOJA_REGISTRO);
+
+    if (!hojaConfig) {
+      ui.alert('Error: No se encuentra la hoja "Config".');
+      return;
+    }
+    if (!hojaRegistro) {
+      ui.alert('Error: No se encuentra la hoja "Registros".');
+      return;
+    }
+
+    // 1. Crear un mapa de colores desde la hoja "Config"
+    const rangoGruposConfig = hojaConfig.getRange("A30:B43");
+    const valoresGruposConfig = rangoGruposConfig.getValues();
+    const coloresGruposConfig = rangoGruposConfig.getBackgrounds();
+    
+    const mapaColores = {};
+    for (let i = 0; i < valoresGruposConfig.length; i++) {
+      const nombreGrupo = valoresGruposConfig[i][0]; 
+      const color = coloresGruposConfig[i][1];       
+      if (nombreGrupo && nombreGrupo.trim() !== "") {
+        mapaColores[nombreGrupo.trim().toUpperCase()] = color;
+      }
+    }
+
+    // 2. Leer todos los datos de la hoja "Registros"
+    const ultimaFila = hojaRegistro.getLastRow();
+    if (ultimaFila <= 1) {
+       ui.alert('No hay datos para actualizar en "Registros".');
+       return;
+    }
+    
+    const rangoFechas = hojaRegistro.getRange(2, COL_FECHA_NACIMIENTO_REGISTRO, ultimaFila - 1, 1); 
+    const valoresFechas = rangoFechas.getValues();
+    
+    const nuevosValoresGrupo = [];
+    const nuevosColoresGrupo = [];
+
+    // 3. Procesar cada fila en memoria
+    for (let i = 0; i < valoresFechas.length; i++) {
+      const fechaNacObj = valoresFechas[i][0]; 
+      let textoGrupo = "Sin Fecha";
+      let colorGrupo = "#ffffff"; 
+
+      if (fechaNacObj && fechaNacObj instanceof Date) {
+        try {
+          const fechaNacStr = Utilities.formatDate(fechaNacObj, "GMT", "yyyy-MM-dd");
+          textoGrupo = obtenerGrupoPorFechaNacimiento(fechaNacStr);
+
+          const claveMapa = textoGrupo.trim().toUpperCase();
+          if (mapaColores[claveMapa]) {
+            colorGrupo = mapaColores[claveMapa];
+          } else {
+            colorGrupo = "#ffffff";
+          }
+        } catch (e) {
+           Logger.log("Error procesando fecha en fila " + (i+2) + ": " + e.message);
+           textoGrupo = "Error Fecha";
+           colorGrupo = "#ffffff";
+        }
+      }
+      
+      nuevosValoresGrupo.push([textoGrupo]);
+      nuevosColoresGrupo.push([colorGrupo]);
+    }
+
+    // 4. Escribir los datos de vuelta en la hoja "Registros"
+    hojaRegistro.getRange(2, COL_GRUPOS, nuevosValoresGrupo.length, 1).setValues(nuevosValoresGrupo);
+    hojaRegistro.getRange(2, COL_GRUPOS, nuevosColoresGrupo.length, 1).setBackgrounds(nuevosColoresGrupo);
+
+    // 5. Llamar a la función de conteo CORRECTA para actualizar la hoja "Contador"
+    actualizarContadorGruposCompleto(); 
+    
+    ui.alert('¡Proceso completado! Se actualizaron ' + nuevosValoresGrupo.length + ' filas en "Registros" y se actualizó la hoja "Contador".');
+
+  } catch (e) {
+    Logger.log("Error en actualizarGruposManual: " + e.message);
+    ui.alert("Ocurrió un error: " + e.message);
+  }
+}
+
+
+/**
+ * Lógica para asignar grupos según la fecha de nacimiento.
+ */
+function obtenerGrupoPorFechaNacimiento(fechaNacStr) {
+  if (!fechaNacStr) return "Sin Fecha";
+
+  try {
+    const fechaNac = new Date(fechaNacStr + "T00:00:00Z"); 
+    
+    
+    if (fechaNac >= new Date(Date.UTC(2022, 6, 30)) && fechaNac < new Date(Date.UTC(2023, 6, 30))) return "Grupo 3 años";
+    if (fechaNac >= new Date(Date.UTC(2021, 6, 30)) && fechaNac < new Date(Date.UTC(2022, 6, 30))) return "Grupo 4 años";
+    if (fechaNac >= new Date(Date.UTC(2020, 6, 30)) && fechaNac < new Date(Date.UTC(2021, 6, 30))) return "Grupo 5 años";
+    if (fechaNac >= new Date(Date.UTC(2019, 6, 30)) && fechaNac < new Date(Date.UTC(2020, 6, 30))) return "Grupo 6 años";
+    if (fechaNac >= new Date(Date.UTC(2018, 6, 30)) && fechaNac < new Date(Date.UTC(2019, 6, 30))) return "Grupo 7 años";
+    if (fechaNac >= new Date(Date.UTC(2017, 6, 30)) && fechaNac < new Date(Date.UTC(2018, 6, 30))) return "Grupo 8 años";
+    if (fechaNac >= new Date(Date.UTC(2016, 6, 30)) && fechaNac < new Date(Date.UTC(2017, 6, 30))) return "Grupo 9 años";
+    if (fechaNac >= new Date(Date.UTC(2015, 6, 30)) && fechaNac < new Date(Date.UTC(2016, 6, 30))) return "Grupo 10 años";
+    if (fechaNac >= new Date(Date.UTC(2014, 6, 30)) && fechaNac < new Date(Date.UTC(2015, 6, 30))) return "Grupo 11 años";
+    if (fechaNac >= new Date(Date.UTC(2013, 6, 30)) && fechaNac < new Date(Date.UTC(2014, 6, 30))) return "Grupo 12 años";
+    
+    // (Extendido a 15)
+    if (fechaNac >= new Date(Date.UTC(2012, 6, 30)) && fechaNac < new Date(Date.UTC(2013, 6, 30))) return "Grupo 13 años";
+    if (fechaNac >= new Date(Date.UTC(2011, 6, 30)) && fechaNac < new Date(Date.UTC(2012, 6, 30))) return "Grupo 14 años";
+    if (fechaNac >= new Date(Date.UTC(2010, 6, 30)) && fechaNac < new Date(Date.UTC(2011, 6, 30))) return "Grupo 15 años";
+
+    return "Fuera de rango"; // Default
+
+  } catch (e) {
+    Logger.log("Error al parsear fecha en obtenerGrupoPorFechaNacimiento: " + fechaNacStr + " | Error: " + e.message);
+    return "Error Fecha";
+  }
+}
+
+// La función 'onEdit' y 'actualizarContadorDeGruposConColor' fueron eliminadas
+// porque fueron reemplazadas por 'onChange' y la nueva versión de
+// 'actualizarContadorGruposCompleto' (en Contador.js).
+/*
+function onOpen() {
+  const ui = SpreadsheetApp.getUi();
+  ui.createMenu('Escuela Hípico')
+    .addSubMenu(ui.createMenu('🧰Utililidad')
+      .addItem('Eliminar Espaciados en Datos', 'limpiarColumnasPorHoja')
       .addItem('Actualizar Grupos y Colores', 'actualizarGruposManual')
       .addItem('Actualizar Contador (Normal/Extendida)', 'actualizarContadorGruposCompleto')) // <-- ESTA ES LA LÍNEA NUEVA
     .addToUi();
 }
-/*
+
+
 function onEdit(e) {
   // 'e' es el objeto de evento
   if (!e || !e.range) {
@@ -32,7 +193,7 @@ function onEdit(e) {
     }
   }
 }
-*/
+
 function onEdit(e) {
   try {
     if (!e) return; // Salir si no hay evento (ej. al ejecutar desde el editor)
@@ -168,22 +329,22 @@ function obtenerGrupoPorFechaNacimiento(fechaNacStr) {
     // Mes 6 = Julio
     // La lógica se basa en la fórmula del usuario: (>= 1-Jul-AAAA) y (< 1-Jul-AAAA+1)
     
-    if (fechaNac >= new Date(Date.UTC(2022, 6, 1)) && fechaNac < new Date(Date.UTC(2023, 6, 1))) return "Grupo 2 años";
-    if (fechaNac >= new Date(Date.UTC(2021, 6, 1)) && fechaNac < new Date(Date.UTC(2022, 6, 1))) return "Grupo 3 años";
-    if (fechaNac >= new Date(Date.UTC(2020, 6, 1)) && fechaNac < new Date(Date.UTC(2021, 6, 1))) return "Grupo 4 años";
-    if (fechaNac >= new Date(Date.UTC(2019, 6, 1)) && fechaNac < new Date(Date.UTC(2020, 6, 1))) return "Grupo 5 años";
-    if (fechaNac >= new Date(Date.UTC(2018, 6, 1)) && fechaNac < new Date(Date.UTC(2019, 6, 1))) return "Grupo 6 años";
-    if (fechaNac >= new Date(Date.UTC(2017, 6, 1)) && fechaNac < new Date(Date.UTC(2018, 6, 1))) return "Grupo 7 años";
-    if (fechaNac >= new Date(Date.UTC(2016, 6, 1)) && fechaNac < new Date(Date.UTC(2017, 6, 1))) return "Grupo 8 años";
-    if (fechaNac >= new Date(Date.UTC(2015, 6, 1)) && fechaNac < new Date(Date.UTC(2016, 6, 1))) return "Grupo 9 años";
-    if (fechaNac >= new Date(Date.UTC(2014, 6, 1)) && fechaNac < new Date(Date.UTC(2015, 6, 1))) return "Grupo 10 años";
-    if (fechaNac >= new Date(Date.UTC(2013, 6, 1)) && fechaNac < new Date(Date.UTC(2014, 6, 1))) return "Grupo 11 años";
-    if (fechaNac >= new Date(Date.UTC(2012, 6, 1)) && fechaNac < new Date(Date.UTC(2013, 6, 1))) return "Grupo 12 años";
+    if (fechaNac >= new Date(Date.UTC(2022, 6, 30)) && fechaNac < new Date(Date.UTC(2023, 6, 1))) return "Grupo 2 años";
+    if (fechaNac >= new Date(Date.UTC(2021, 6, 30)) && fechaNac < new Date(Date.UTC(2022, 6, 30))) return "Grupo 3 años";
+    if (fechaNac >= new Date(Date.UTC(2020, 6, 30)) && fechaNac < new Date(Date.UTC(2021, 6, 30))) return "Grupo 4 años";
+    if (fechaNac >= new Date(Date.UTC(2019, 6, 30)) && fechaNac < new Date(Date.UTC(2020, 6, 30))) return "Grupo 5 años";
+    if (fechaNac >= new Date(Date.UTC(2018, 6, 30)) && fechaNac < new Date(Date.UTC(2019, 6, 30))) return "Grupo 6 años";
+    if (fechaNac >= new Date(Date.UTC(2017, 6, 30)) && fechaNac < new Date(Date.UTC(2018, 6, 30))) return "Grupo 7 años";
+    if (fechaNac >= new Date(Date.UTC(2016, 6, 30)) && fechaNac < new Date(Date.UTC(2017, 6, 30))) return "Grupo 8 años";
+    if (fechaNac >= new Date(Date.UTC(2015, 6, 30)) && fechaNac < new Date(Date.UTC(2016, 6, 30))) return "Grupo 9 años";
+    if (fechaNac >= new Date(Date.UTC(2014, 6, 30)) && fechaNac < new Date(Date.UTC(2015, 6, 30))) return "Grupo 10 años";
+    if (fechaNac >= new Date(Date.UTC(2013, 6, 30)) && fechaNac < new Date(Date.UTC(2014, 6, 30))) return "Grupo 11 años";
+    if (fechaNac >= new Date(Date.UTC(2012, 6, 30)) && fechaNac < new Date(Date.UTC(2013, 6, 30))) return "Grupo 12 años";
     
     // (Extendido a 15)
-    if (fechaNac >= new Date(Date.UTC(2011, 6, 1)) && fechaNac < new Date(Date.UTC(2012, 6, 1))) return "Grupo 13 años";
-    if (fechaNac >= new Date(Date.UTC(2010, 6, 1)) && fechaNac < new Date(Date.UTC(2011, 6, 1))) return "Grupo 14 años";
-    if (fechaNac >= new Date(Date.UTC(2009, 6, 1)) && fechaNac < new Date(Date.UTC(2010, 6, 1))) return "Grupo 15 años";
+    if (fechaNac >= new Date(Date.UTC(2011, 6, 30)) && fechaNac < new Date(Date.UTC(2012, 6, 30))) return "Grupo 13 años";
+    if (fechaNac >= new Date(Date.UTC(2010, 6, 30)) && fechaNac < new Date(Date.UTC(2011, 6, 30))) return "Grupo 14 años";
+    if (fechaNac >= new Date(Date.UTC(2009, 6, 30)) && fechaNac < new Date(Date.UTC(2010, 6, 30))) return "Grupo 15 años";
 
     return "Fuera de rango"; // Default
 
@@ -271,3 +432,8 @@ function actualizarContadorDeGruposConColor() {
 
   Logger.log("Contador de grupos con color actualizado (formato manual preservado).");
 }
+*/
+
+
+
+
